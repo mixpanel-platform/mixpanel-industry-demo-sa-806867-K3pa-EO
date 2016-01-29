@@ -6,7 +6,7 @@
     <link rel="stylesheet" type="text/css" href="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.css">
     <script src="https://d3js.org/d3.v3.min.js"></script>
     <script src="https://code.jquery.com/jquery-2.1.4.js"></script>
-    <script src="mixpanel-platform.min.js"></script>
+    <script src="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.js"></script>
   </head>
   <body class="mixpanel-platform-body">
     <style>
@@ -239,7 +239,7 @@
       <div id="dates"></div>
       <div class="events">
         <div class="events_label">Funnel Steps:</div>
-        <input id="event_list" value="Request Demo,Create Account,Complete Chat">
+        <input id="event_list" value="Request Demo,Create Account,Process Payment">
         <div id="run">RUN</div>
       </div>
       <div id="report">
@@ -273,10 +273,9 @@
         <div id="funnel-query">BUILD FUNNEL</div>
       </div>
     </div>
-    <p></p>
     <script>
       var event_list = $('#event_list').val().split(',');
-      var path_length = 4;
+      var path_length = 3;
       var funnel_select = [];
 
       // runQuery
@@ -316,7 +315,6 @@
       });
 
       // custom query
-      //MP.api.setCredentials('e9eb40d73246d38af2e3a425761a73b4', '0d4eaad557622208b4dcdcb1d035aecf');
       function runQuery() {
         // set up parameters
         event_list = $('#event_list').val().split(',');
@@ -330,21 +328,23 @@
         $('.flow').hide();
 
         var dateVal = $('#dates').val();
-        var params = {
-          'from_date': date_to_string(dateVal.from),
-          'to_date': date_to_string(dateVal.to),
-          'params': '{}'
-        };
-        var script = 'function main(){return Events({}).groupByUser(function(e,t){e=e||{event_path:[],funnel_step:0};for(var n=0;n<t.length;++n)(0===e.event_path.length&&t[n].name==event_list[0]||e.event_path.length>0)&&(e.event_path.push(t[n].name),e.funnel_step=1);return e}).filter(function(e){return e.value&&e.value.funnel_step>0}).reduce(function(e,t){for(var n=[],a=0;a<t.length;a++)n[a]={funnel_step:t[a].value.funnel_step,dropoff_path:[]},_.each(event_list.slice(1),function(e,r){var l=t[a].value.event_path.indexOf(e);l>-1?(t[a].value.event_path.splice(0,l),n[a].funnel_step++):(t[a].value.event_path.splice(path_length,t[a].value.event_path.length),n[a].dropoff_path=t[a].value.event_path)}),n[a].funnel_step=event_list[n[a].funnel_step-1];for(var r=0;r<e.length;r++){var l=e[r];_.each(l,function(e){n.push(e)})}return n}).reduce(function(e,t){for(var n={},a=0;a<t.length;a++)for(var r=0;r<t[a].length;r++){var l=t[a][r].funnel_step,u=t[a][r].dropoff_path;n[l]=n[l]||{count:0,all_paths:[]},n[l].count++,n[l].all_paths.push(u)}return n}).reduce(function(e,t){for(var n={},a=0,r=0;r<t.length;r++)for(var l=event_list.length-1;l>=0;l--){var u=event_list[l],v=t[r][u].count;a+=v,n[u]=n[u]||{total:a,flows:{}};for(var f in t[r][u].all_paths){var p=n[u].flows;for(var o in t[r][u].all_paths[f]){var _=t[r][u].all_paths[f][o];p[_]=p[_]||{count:0,next:{}},p[_].count++,p=p[_].next}}}return n})}var path_length=' + path_length + ';var event_list=' + JSON.stringify(event_list) + ';'
+        var queryParams = {
+            event_list: event_list,
+            path_length: path_length,
+            from_date: date_to_string(dateVal.from),
+            to_date: date_to_string(dateVal.to),
+          };
+        var script = $('#cq').html();
+        script = $.trim(script);
         
-        MP.api.custom_query(script, params).done(function(results) {
+        MP.api.custom_query(script, queryParams).done(function(results) {
           cqResult = results[0];
           for (var i = 0; i < event_list.length; i++) {
             var first = i == 0 ? true : false;
             if (first) {
-              addFunnelStep(event_list[i], cqResult[event_list[i]].total, 0, first);
+              addFunnelStep(event_list[i], cqResult[i].count, 0, first);
             } else {
-              addFunnelStep(event_list[i], cqResult[event_list[i]].total, cqResult[event_list[i-1]].total-cqResult[event_list[i]].total, first);
+              addFunnelStep(event_list[i], cqResult[i].count, cqResult[i-1].count-cqResult[i].count, first);
             }
           }
         });
@@ -407,12 +407,13 @@
       function showFlow(event) {
         var flow = $('.flow').show();
         flow.find('.header').text(event + ' Alternative Paths');
-        mapFlow(event);
+        var index = event_list.indexOf(event);
+        mapFlow(index);
       }
       
-      function mapFlow(event) {
-        var flows = cqResult[event].flows[event];
-        var root = event;
+      function mapFlow(index) {
+        var flows = cqResult[index];
+        var root = event_list[index];
         flowObject = {
           'name': flows.count + ': ' + root,
           'count': flows.count,
@@ -423,7 +424,6 @@
         _.each(_.keys(flows.next), function(eventName) {
           getChildren(flowObject, flows.next[eventName], '', eventName)
         });
-        
         createFlow(flowObject);
       }
       
@@ -486,13 +486,14 @@
       d3.select(self.frameElement).style("height", "800px");
 
       function update(source) {
+        var flow_length = path_length + 1;
 
         // Compute the new tree layout.
         var nodes = tree.nodes(treeRoot).reverse(),
             links = tree.links(nodes);
 
         // Normalize for fixed-depth.
-        nodes.forEach(function(d) { d.y = 850 / path_length * d.depth; });
+        nodes.forEach(function(d) { d.y = 850 / flow_length * d.depth; });
         
         // Find max count
         var maxCount = 0;
@@ -508,8 +509,8 @@
         var nodeEnter = node.enter().append("g")
             .attr("class", function(d) {return d.parent ? "node" : "root node" })
             .attr("transform", function(d) { return "translate(" + source.y0 + "," + source.x0 + ")"; })
-            .style("-webkit-clip-path", "polygon(-3px 0, " + 750/path_length + "px 0, " + 750/path_length + "px 100%, -3px 100%")
-            .style("clip-path", "polygon(-3px 0, " + 750/path_length + "px 0, " + 750/path_length + "px 100%, -3px 100%")
+            .style("-webkit-clip-path", "polygon(-3px 0, " + 750/flow_length + "px 0, " + 750/flow_length + "px 100%, -3px 100%")
+            .style("clip-path", "polygon(-3px 0, " + 750/flow_length + "px 0, " + 750/flow_length + "px 100%, -3px 100%")
             .on("click", click);
 
         nodeEnter.append("circle")
@@ -556,8 +557,6 @@
             .data(links, function(d) { return d.target.id; });
 
         // Enter any new links at the parent's previous position.
-        console.log(ratio);
-        console.log(maxCount);
         link.enter().insert("path", "g")
             .attr("class", "link")
             .style("stroke-width", function(d) { 
@@ -633,5 +632,94 @@
       }
       
     </script>
+    
+    <script type="text/cq" id="cq">
+      var EVENT_LIST = params.event_list || ['Request Demo', 'Create Account', 'Process Payment'];
+      var PATH_LENGTH =  params.path_length || 4;
+      
+      function main() {
+          return Events({
+              from_date: params.from_date,
+              to_date: params.to_date
+          })
+          .groupByUser(function(state, events) {
+              // collect the event list of each user, if they entered the funnel
+              state = state || {
+                  current_step: -1,
+                  exit_path: []
+              };
+              _.each(events, function(e) {
+                  if (EVENT_LIST[state.current_step + 1] == e.name) {
+                      state.exit_path = [];
+                      state.current_step += 1;
+                  } else if (state.exit_path.length < PATH_LENGTH) {
+                      state.exit_path.push(e.name);
+                  }
+              });
+      
+              return state;
+          })
+          .filter(function(item) {
+              // filter out users who did not enter the funnel
+              return item.value.current_step > -1;
+          })
+          .reduce(function(previous_outputs, user_states) {
+              var output = [];
+              _.each(EVENT_LIST, function(e) {
+                  output.push({ step: e, count: 0, next: {} });
+              });
+      
+              _.each(user_states, function(state) {
+                  state = state.value;
+                  var step = 0;
+                  while (step < state.current_step) {
+                      output[step].count++;
+                      step++;
+                  }
+                  if (step != state.current_step) { throw "you got a bug" }
+      
+                  output[step].count++;
+                  var flow = output[step].next;
+                  _.each(state.exit_path, function(e) {
+                      flow[e] = flow[e] || { count: 0, next: {}};
+                      flow[e].count++;
+                      flow = flow[e].next;
+                  });
+              });
+      
+              _.each(previous_outputs, function(previous_output) {
+                  merge(output, previous_output);
+              });
+      
+              return output;
+          });
+      
+          function merge(output1, output2) {
+              for (var i = 0; i < output2.length; i++) {
+                  output1[i].count += output2[i].count;
+                  recursiveSumMerge(output1[i].next, output2[i].next);
+              }
+          }
+      
+          function recursiveSumMerge(d1, d2) {
+              for (var key in d2) {
+                  var v1 = d1[key],
+                      v2 = d2[key];
+      
+                  if (!(key in d1)) {
+                      d1[key] = v2;
+                  } else if (typeof v1 === "number" && typeof v2 === "number") {
+                      d1[key] += v2;
+                  } else if (typeof v1 === "object" && typeof v2 === "object") {
+                      recursiveSumMerge(v1, v2);
+                  } else {
+                      throw "mismatched types for key: " + key;
+                  }
+              }
+          }
+      }
+
+    </script>
+
   </body>
 </html>
